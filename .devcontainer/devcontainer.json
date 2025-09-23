@@ -1,0 +1,19 @@
+{
+	"name": "mini-bbdd-test",
+	"image": "mcr.microsoft.com/devcontainers/typescript-node:24",
+	"workspaceFolder": "/workspaces/mini-bbdd-test",
+	"forwardPorts": [5173, 8080],
+	"portsAttributes": {
+		"5173": {
+			"label": "Vite Dev Server",
+			"onAutoForward": "notify"
+		},
+		"8080": {
+			"label": "SQLite Admin",
+			"onAutoForward": "notify"
+		}
+	},
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
+	}
+}
