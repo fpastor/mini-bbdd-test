@@ -10,8 +10,11 @@ export * from './entities/organization.entity.js';
 // Repositories
 export * from './repositories/organization.repository.js';
 
+// Controllers
+export * from './controllers/organization.controller.js';
+
+// Routes
+export * from './routes/organization.routes.js';
+
 // DTOs
 // export * from './dto/index.js';
-
-// Controllers
-// export * from './controllers/organization.controller.js';

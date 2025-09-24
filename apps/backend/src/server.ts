@@ -29,28 +29,6 @@ fastify.get('/api/health', async () => {
   };
 });
 
-// Organizations endpoints
-fastify.get('/api/organizations', async () => {
-  const em = orm.em.fork();
-  const organizations = await em.find('Organization', {});
-  return { data: organizations };
-});
-
-fastify.get('/api/organizations/stats', async () => {
-  const em = orm.em.fork();
-  const total = await em.count('Organization', {});
-  const active = await em.count('Organization', { active: true });
-  const inactive = total - active;
-  
-  return { 
-    data: { 
-      total, 
-      active, 
-      inactive 
-    } 
-  };
-});
-
 // CORS for frontend
 fastify.register(import('@fastify/cors'), {
   origin: ['http://localhost:5173', 'http://127.0.0.1:5173']
@@ -60,6 +38,13 @@ fastify.register(import('@fastify/cors'), {
 async function start() {
   try {
     await initDatabase();
+    
+    // Register organization routes after DB init
+    const { organizationRoutes } = await import('./organization/routes/organization.routes.js');
+    await fastify.register(organizationRoutes, { 
+      prefix: '/api/organizations',
+      orm 
+    });
     
     const address = await fastify.listen({ 
       port: 3000, 

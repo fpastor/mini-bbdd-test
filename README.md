@@ -7,8 +7,9 @@ Un proyecto de práctica que demuestra una arquitectura moderna de **fullstack**
 Este proyecto implementa una aplicación web completa con:
 - **Frontend**: Aplicación web moderna con Vite y TypeScript
 - **Backend**: API REST con Fastify, MikroORM y SQLite
-- **Base de datos**: SQLite con entidades TypeScript
-- **Arquitectura modular**: Organización por dominios de negocio
+- **Base de datos**: SQLite con entidades TypeScript y migraciones automáticas
+- **Arquitectura modular**: Organización por dominios con patrón MVC
+- **APIs RESTful**: Endpoints completamente funcionales con validación
 
 ## 🏗️ Arquitectura del Proyecto
 
@@ -22,19 +23,23 @@ mini-bbdd-test/
 │   │   └── package.json
 │   └── backend/           # API REST (Fastify + MikroORM)
 │       ├── src/
-│       │   ├── organization/     # Módulo Organization
-│       │   │   ├── entities/     # Entidades de base de datos
+│       │   ├── organization/     # Módulo Organization (MVC)
+│       │   │   ├── entities/     # Entidades TypeScript + decoradores
+│       │   │   │   └── organization.entity.ts
 │       │   │   ├── repositories/ # Consultas personalizadas
-│       │   │   ├── services/     # Lógica de negocio
-│       │   │   └── dto/          # Data Transfer Objects
-│       │   ├── server.ts         # Servidor principal
-│       │   └── mikro-orm.config.ts
+│       │   │   │   └── organization.repository.ts
+│       │   │   ├── controllers/  # Controladores HTTP
+│       │   │   │   └── organization.controller.ts
+│       │   │   └── routes/       # Definición de rutas Fastify
+│       │   │       └── organization.routes.ts
+│       │   ├── server.ts         # Servidor principal + configuración
+│       │   └── mikro-orm.config.ts # Configuración ORM
 │       ├── data/          # Base de datos SQLite
+│       │   └── database.sqlite
 │       └── package.json
-├── packages/
-│   └── shared/            # Tipos y utilidades compartidas
 ├── infra/
 │   └── dev/              # Docker compose para herramientas
+│       └── docker-compose.yml
 └── package.json          # Workspace root
 ```
 
@@ -116,31 +121,70 @@ npm run start --workspace=backend
 
 ### Base URL: `http://localhost:3000/api`
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check del servidor |
-| `GET` | `/organizations` | Lista todas las organizaciones |
-| `GET` | `/organizations/stats` | Estadísticas de organizaciones |
+#### Organizations Module
 
-### Ejemplos de respuesta:
+| Método | Endpoint | Descripción | Parámetros |
+|--------|----------|-------------|------------|
+| `GET` | `/organizations` | Lista todas las organizaciones | - |
+| `GET` | `/organizations/stats` | Estadísticas de organizaciones | - |
+| `GET` | `/organizations/active` | Solo organizaciones activas | - |
+| `GET` | `/organizations/search` | Búsqueda por nombre | `?name=texto` |
 
-**GET /api/health**
+### Ejemplos de uso:
+
+**GET /api/organizations**
+```bash
+curl http://localhost:3000/api/organizations
+```
 ```json
 {
-  "status": "ok",
-  "timestamp": "2024-09-24T14:30:00.000Z",
-  "database": "connected"
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "TechCorp Solutions",
+      "email": "contact@techcorp.com",
+      "license": "MIT",
+      "active": true,
+      "createdAt": "2024-09-24T14:30:00.000Z",
+      "updatedAt": "2024-09-24T14:30:00.000Z"
+    }
+  ],
+  "count": 1
 }
 ```
 
 **GET /api/organizations/stats**
+```bash
+curl http://localhost:3000/api/organizations/stats
+```
 ```json
 {
   "data": {
-    "total": 5,
-    "active": 4,
-    "inactive": 1
+    "total": 3,
+    "active": 3,
+    "inactive": 0
   }
+}
+```
+
+**GET /api/organizations/search?name=Tech**
+```bash
+curl "http://localhost:3000/api/organizations/search?name=Tech"
+```
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "TechCorp Solutions",
+      "email": "contact@techcorp.com",
+      "license": "MIT",
+      "active": true,
+      "createdAt": "2024-09-24T14:30:00.000Z",
+      "updatedAt": "2024-09-24T14:30:00.000Z"
+    }
+  ],
+  "count": 1
 }
 ```
 
@@ -209,11 +253,13 @@ Acceder en: `http://localhost:8080`
 
 ### Modularidad por Dominio
 - Cada módulo de negocio (ej: `organization`) contiene toda su lógica
-- Separación clara: entities, repositories, services, DTOs
+- Separación clara: entities, repositories, controllers, routes
+- Arquitectura MVC (Model-View-Controller) completa
 - Fácil escalabilidad añadiendo nuevos módulos
 
-### Repository Pattern
+### Patrón Repository
 ```typescript
+@Repository(Organization)
 class OrganizationRepository extends EntityRepository<Organization> {
   async findActive(): Promise<Organization[]> {
     return this.find({ active: true });
@@ -224,13 +270,69 @@ class OrganizationRepository extends EntityRepository<Organization> {
       .where('LOWER(name) LIKE LOWER(?)', [`%${search}%`])
       .getResultList();
   }
+
+  async getStats() {
+    const total = await this.count({});
+    const active = await this.count({ active: true });
+    return { total, active, inactive: total - active };
+  }
 }
 ```
 
-### Service Layer
-Lógica de negocio separada del acceso a datos y presentación.
+### Patrón Controller
+```typescript
+export class OrganizationController {
+  constructor(private organizationRepository: OrganizationRepository) {}
+
+  async getAll(): Promise<{ data: Organization[]; count: number }> {
+    const organizations = await this.organizationRepository.findAll();
+    return { data: organizations, count: organizations.length };
+  }
+
+  async search(name: string): Promise<{ data: Organization[]; count: number }> {
+    const organizations = await this.organizationRepository.findByNameContaining(name);
+    return { data: organizations, count: organizations.length };
+  }
+}
+```
+
+### Configuración de Rutas (Fastify)
+```typescript
+const organizationRoutes: FastifyPluginAsync = async (fastify) => {
+  const controller = new OrganizationController(organizationRepository);
+
+  fastify.get('/organizations', async (request, reply) => {
+    try {
+      const result = await controller.getAll();
+      return reply.send(result);
+    } catch (error) {
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+};
+```
 
 ## 🧪 Testing
+
+### Testing Manual de APIs
+
+Puedes probar las APIs usando `curl` o herramientas como Postman:
+
+```bash
+# Listar todas las organizaciones
+curl -s http://localhost:3000/api/organizations | jq
+
+# Obtener estadísticas
+curl -s http://localhost:3000/api/organizations/stats | jq
+
+# Solo organizaciones activas
+curl -s http://localhost:3000/api/organizations/active | jq
+
+# Búsqueda por nombre
+curl -s "http://localhost:3000/api/organizations/search?name=Tech" | jq
+```
+
+### Tests Automatizados
 
 ```bash
 # Ejecutar tests (cuando estén disponibles)
@@ -240,3 +342,33 @@ npm test
 npm test --workspace=backend
 npm test --workspace=frontend
 ```
+
+## 🔍 Características Implementadas
+
+### ✅ Backend Completamente Funcional
+- [x] Configuración ESM con TypeScript
+- [x] MikroORM con SQLite y decoradores
+- [x] Entidades con UUID y timestamps automáticos
+- [x] Repositorios personalizados con consultas optimizadas
+- [x] Controladores con manejo de errores
+- [x] Rutas modularizadas con Fastify
+- [x] Base de datos con datos de ejemplo
+- [x] APIs RESTful completamente funcionales
+
+### ✅ Arquitectura Moderna
+- [x] Monorepo con npm workspaces
+- [x] Separación frontend/backend
+- [x] Patrón MVC bien estructurado
+- [x] TypeScript con configuración ESM
+- [x] Manejo de errores consistente
+- [x] Responses JSON estandarizadas
+
+### 🚧 Por Implementar
+- [ ] Endpoints POST/PUT/DELETE
+- [ ] Validación de schemas con Zod/Joi
+- [ ] Autenticación y autorización
+- [ ] Middleware de logging
+- [ ] Tests unitarios e integración
+- [ ] Documentación Swagger/OpenAPI
+- [ ] Integración frontend con backend
+- [ ] Docker para producción
