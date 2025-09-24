@@ -4,6 +4,10 @@
 	"workspaceFolder": "/workspaces/mini-bbdd-test",
 	"forwardPorts": [5173, 8080],
 	"portsAttributes": {
+		"3000": {
+			"label": "Backend Server",
+			"onAutoForward": "silent"
+		},
 		"5173": {
 			"label": "Vite Dev Server",
 			"onAutoForward": "notify"
