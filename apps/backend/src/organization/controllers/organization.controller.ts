@@ -1,21 +1,23 @@
 import { MikroORM } from '@mikro-orm/core';
-import { Organization } from '../entities/organization.entity.js';
-import { OrganizationRepository } from '../repositories/organization.repository.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { OrganizationService } from '../services/organization.service.js';
+import { OrganizationValidationService } from '../services/organization-validation.service.js';
+import type { CreateOrganizationDto, CreateOrganizationResponse } from '../dto/create-organization.dto.js';
 
 export class OrganizationController {
-  constructor(private orm: MikroORM) {}
+  private organizationService: OrganizationService;
+
+  constructor(orm: MikroORM) {
+    this.organizationService = new OrganizationService(orm);
+  }
 
   // GET /api/organizations
   async getAll(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      const em = this.orm.em.fork();
-      const organizations = await em.find(Organization, {});
-      
+      const result = await this.organizationService.getAllOrganizations();
       return reply.send({ 
         success: true,
-        data: organizations,
-        count: organizations.length
+        ...result
       });
     } catch (error) {
       return reply.status(500).send({ 
@@ -28,11 +30,7 @@ export class OrganizationController {
   // GET /api/organizations/stats  
   async getStats(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      const em = this.orm.em.fork();
-      const organizationRepo = em.getRepository(Organization) as OrganizationRepository;
-      
-      const stats = await organizationRepo.getStats();
-      
+      const stats = await this.organizationService.getStats();
       return reply.send({ 
         success: true,
         data: stats 
@@ -48,15 +46,10 @@ export class OrganizationController {
   // GET /api/organizations/active
   async getActive(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      const em = this.orm.em.fork();
-      const organizationRepo = em.getRepository(Organization) as OrganizationRepository;
-      
-      const activeOrgs = await organizationRepo.findActive();
-      
+      const result = await this.organizationService.getActiveOrganizations();
       return reply.send({ 
         success: true,
-        data: activeOrgs,
-        count: activeOrgs.length
+        ...result
       });
     } catch (error) {
       return reply.status(500).send({ 
@@ -78,21 +71,57 @@ export class OrganizationController {
         });
       }
 
-      const em = this.orm.em.fork();
-      const organizationRepo = em.getRepository(Organization) as OrganizationRepository;
-      
-      const organizations = await organizationRepo.findByNameContaining(name);
-      
+      const result = await this.organizationService.searchOrganizations(name);
       return reply.send({ 
         success: true,
-        data: organizations,
-        count: organizations.length,
-        query: name
+        ...result
       });
     } catch (error) {
       return reply.status(500).send({ 
         success: false, 
         error: 'Failed to search organizations' 
+      });
+    }
+  }
+
+  // POST /api/organizations
+  async create(request: FastifyRequest, reply: FastifyReply): Promise<CreateOrganizationResponse> {
+    try {
+      // 1. Validar entrada
+      const validation = OrganizationValidationService.validateCreateOrganization(request.body);
+      if (!validation.isValid) {
+        return reply.status(400).send({
+          success: false,
+          error: validation.errors.join(', ')
+        });
+      }
+
+      // 2. Sanitizar datos
+      const dto: CreateOrganizationDto = OrganizationValidationService.sanitizeCreateOrganization(request.body);
+
+      // 3. Crear organización usando el servicio
+      const organization = await this.organizationService.createOrganization(dto);
+
+      return reply.status(201).send({
+        success: true,
+        data: organization,
+        message: 'Organization created successfully'
+      });
+
+    } catch (error) {
+      console.error('Error creating organization:', error);
+      
+      // Manejar errores de negocio específicos
+      if (error instanceof Error && error.message === 'An organization with this name already exists') {
+        return reply.status(409).send({
+          success: false,
+          error: error.message
+        });
+      }
+
+      return reply.status(500).send({
+        success: false,
+        error: 'Failed to create organization'
       });
     }
   }

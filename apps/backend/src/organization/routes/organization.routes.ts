@@ -24,4 +24,7 @@ export const organizationRoutes: FastifyPluginAsync<OrganizationRoutesOptions> =
 
   // GET /api/organizations/search?name=xxx
   fastify.get('/search', controller.search.bind(controller));
+
+  // POST /api/organizations
+  fastify.post('/', controller.create.bind(controller));
 };

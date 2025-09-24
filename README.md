@@ -23,13 +23,18 @@ mini-bbdd-test/
 │   │   └── package.json
 │   └── backend/           # API REST (Fastify + MikroORM)
 │       ├── src/
-│       │   ├── organization/     # Módulo Organization (MVC)
+│       │   ├── organization/     # Módulo Organization (MVC completo)
 │       │   │   ├── entities/     # Entidades TypeScript + decoradores
 │       │   │   │   └── organization.entity.ts
 │       │   │   ├── repositories/ # Consultas personalizadas
 │       │   │   │   └── organization.repository.ts
-│       │   │   ├── controllers/  # Controladores HTTP
+│       │   │   ├── services/     # Lógica de negocio + validaciones
+│       │   │   │   ├── organization.service.ts
+│       │   │   │   └── organization-validation.service.ts
+│       │   │   ├── controllers/  # Controladores HTTP (refactorizados)
 │       │   │   │   └── organization.controller.ts
+│       │   │   ├── dto/          # Data Transfer Objects
+│       │   │   │   └── create-organization.dto.ts
 │       │   │   └── routes/       # Definición de rutas Fastify
 │       │   │       └── organization.routes.ts
 │       │   ├── server.ts         # Servidor principal + configuración
@@ -123,12 +128,13 @@ npm run start --workspace=backend
 
 #### Organizations Module
 
-| Método | Endpoint | Descripción | Parámetros |
-|--------|----------|-------------|------------|
-| `GET` | `/organizations` | Lista todas las organizaciones | - |
-| `GET` | `/organizations/stats` | Estadísticas de organizaciones | - |
-| `GET` | `/organizations/active` | Solo organizaciones activas | - |
-| `GET` | `/organizations/search` | Búsqueda por nombre | `?name=texto` |
+| Método | Endpoint | Descripción | Parámetros | Estado |
+|--------|----------|-------------|------------|--------|
+| `GET` | `/organizations` | Lista todas las organizaciones | - | ✅ |
+| `GET` | `/organizations/stats` | Estadísticas de organizaciones | - | ✅ |
+| `GET` | `/organizations/active` | Solo organizaciones activas | - | ✅ |
+| `GET` | `/organizations/search` | Búsqueda por nombre | `?name=texto` | ✅ |
+| `POST` | `/organizations` | Crear nueva organización | JSON body | ✅ |
 
 ### Ejemplos de uso:
 
@@ -187,6 +193,39 @@ curl "http://localhost:3000/api/organizations/search?name=Tech"
   "count": 1
 }
 ```
+
+**POST /api/organizations**
+```bash
+curl -X POST http://localhost:3000/api/organizations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Nueva Empresa",
+    "email": "contact@nuevaempresa.com",
+    "license": "MIT",
+    "active": true
+  }'
+```
+```json
+{
+  "success": true,
+  "data": {
+    "id": "8f7e6d5c-4b3a-2918-7654-321098765432",
+    "name": "Nueva Empresa",
+    "email": "contact@nuevaempresa.com",
+    "license": "MIT",
+    "active": true,
+    "createdAt": "2025-09-24T15:30:00.000Z",
+    "updatedAt": "2025-09-24T15:30:00.000Z"
+  },
+  "message": "Organization created successfully"
+}
+```
+
+**Validaciones POST:**
+- ✅ Nombre obligatorio y único
+- ✅ Email con formato válido (opcional)
+- ✅ License como string (opcional)
+- ✅ Active como boolean (por defecto: true)
 
 ## 🗄️ Base de Datos
 
@@ -279,37 +318,103 @@ class OrganizationRepository extends EntityRepository<Organization> {
 }
 ```
 
-### Patrón Controller
+### Patrón Service (Lógica de Negocio)
 ```typescript
-export class OrganizationController {
-  constructor(private organizationRepository: OrganizationRepository) {}
+export class OrganizationService {
+  constructor(private orm: MikroORM) {}
 
-  async getAll(): Promise<{ data: Organization[]; count: number }> {
-    const organizations = await this.organizationRepository.findAll();
-    return { data: organizations, count: organizations.length };
-  }
+  async createOrganization(dto: CreateOrganizationDto): Promise<Organization> {
+    const em = this.orm.em.fork();
+    const organizationRepo = em.getRepository(Organization) as OrganizationRepository;
 
-  async search(name: string): Promise<{ data: Organization[]; count: number }> {
-    const organizations = await this.organizationRepository.findByNameContaining(name);
-    return { data: organizations, count: organizations.length };
+    // Verificar duplicados
+    const existingOrg = await organizationRepo.existsByName(dto.name);
+    if (existingOrg) {
+      throw new Error('An organization with this name already exists');
+    }
+
+    // Crear y persistir
+    const organization = new Organization(dto.name, dto.email, dto.license);
+    if (dto.active !== undefined) organization.active = dto.active;
+    
+    await em.persistAndFlush(organization);
+    return organization;
   }
 }
 ```
 
-### Configuración de Rutas (Fastify)
+### DTOs y Validación
 ```typescript
-const organizationRoutes: FastifyPluginAsync = async (fastify) => {
-  const controller = new OrganizationController(organizationRepository);
+// DTO para tipado fuerte
+export interface CreateOrganizationDto {
+  name: string;
+  email?: string;
+  license?: string;
+  active?: boolean;
+}
 
-  fastify.get('/organizations', async (request, reply) => {
-    try {
-      const result = await controller.getAll();
-      return reply.send(result);
-    } catch (error) {
-      return reply.status(500).send({ error: 'Internal server error' });
+// Servicio de validación reutilizable
+export class OrganizationValidationService {
+  static validateCreateOrganization(data: any): ValidationResult {
+    const errors: string[] = [];
+    
+    if (!data.name || typeof data.name !== 'string' || data.name.trim().length === 0) {
+      errors.push('Name is required and must be a non-empty string');
     }
-  });
-};
+    
+    if (data.email && data.email.trim().length > 0) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(data.email.trim())) {
+        errors.push('Email must have a valid format');
+      }
+    }
+    
+    return { isValid: errors.length === 0, errors };
+  }
+}
+```
+
+### Patrón Controller (Refactorizado)
+```typescript
+export class OrganizationController {
+  private organizationService: OrganizationService;
+
+  constructor(orm: MikroORM) {
+    this.organizationService = new OrganizationService(orm);
+  }
+
+  // POST /api/organizations - Limpio y con separación de responsabilidades
+  async create(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      // 1. Validar entrada
+      const validation = OrganizationValidationService.validateCreateOrganization(request.body);
+      if (!validation.isValid) {
+        return reply.status(400).send({
+          success: false,
+          error: validation.errors.join(', ')
+        });
+      }
+
+      // 2. Sanitizar datos
+      const dto = OrganizationValidationService.sanitizeCreateOrganization(request.body);
+
+      // 3. Delegar al servicio
+      const organization = await this.organizationService.createOrganization(dto);
+
+      return reply.status(201).send({
+        success: true,
+        data: organization,
+        message: 'Organization created successfully'
+      });
+    } catch (error) {
+      // Manejo de errores específicos
+      if (error.message === 'An organization with this name already exists') {
+        return reply.status(409).send({ success: false, error: error.message });
+      }
+      return reply.status(500).send({ success: false, error: 'Failed to create organization' });
+    }
+  }
+}
 ```
 
 ## 🧪 Testing
@@ -350,25 +455,41 @@ npm test --workspace=frontend
 - [x] MikroORM con SQLite y decoradores
 - [x] Entidades con UUID y timestamps automáticos
 - [x] Repositorios personalizados con consultas optimizadas
-- [x] Controladores con manejo de errores
+- [x] **Servicios de negocio** separados de controladores
+- [x] **DTOs** para tipado fuerte de requests/responses
+- [x] **Validación modular** con servicios reutilizables
+- [x] Controladores **refactorizados** y limpios
 - [x] Rutas modularizadas con Fastify
 - [x] Base de datos con datos de ejemplo
-- [x] APIs RESTful completamente funcionales
+- [x] **CRUD Create completo** con validaciones
 
-### ✅ Arquitectura Moderna
+### ✅ Arquitectura Moderna y Escalable
 - [x] Monorepo con npm workspaces
 - [x] Separación frontend/backend
-- [x] Patrón MVC bien estructurado
+- [x] **Patrón MVC + Services** bien estructurado
+- [x] **Separación de responsabilidades** clara
 - [x] TypeScript con configuración ESM
-- [x] Manejo de errores consistente
+- [x] Manejo de errores consistente y específico
 - [x] Responses JSON estandarizadas
+- [x] **Lógica de negocio** separada de HTTP
+- [x] **Validaciones reutilizables** y modulares
 
-### 🚧 Por Implementar
-- [ ] Endpoints POST/PUT/DELETE
-- [ ] Validación de schemas con Zod/Joi
+### 🚧 Por Implementar (Próximas mejoras)
+- [ ] **Endpoints PUT/DELETE** para completar CRUD
+- [ ] **Validación con Zod** (reemplazar validation service manual)
+- [ ] **Paginación** para endpoints GET
+- [ ] **Middleware de validación** global
+- [ ] Tests unitarios e integración
 - [ ] Autenticación y autorización
 - [ ] Middleware de logging
-- [ ] Tests unitarios e integración
 - [ ] Documentación Swagger/OpenAPI
 - [ ] Integración frontend con backend
 - [ ] Docker para producción
+
+### 🔄 **Refactoring Realizado Hoy (24/09/2025)**
+- ✅ **Separación de responsabilidades**: Controller → Service → Repository
+- ✅ **DTOs implementados**: Tipado fuerte para requests
+- ✅ **Servicios de validación**: Lógica reutilizable y modular
+- ✅ **Controller limpio**: Solo maneja HTTP, delega lógica
+- ✅ **Manejo de errores específicos**: 400, 409, 500 con mensajes claros
+- ✅ **Arquitectura escalable**: Fácil añadir nuevas entidades
