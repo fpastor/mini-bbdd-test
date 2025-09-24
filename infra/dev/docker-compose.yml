@@ -7,7 +7,7 @@ services:
       - "8080:8080"
     volumes:
       # Monta el directorio donde estará tu base de datos SQLite
-      - ../../data:/data
+      - ../../apps/backend/data:/data
     command: sqlite_web /data/database.sqlite --host 0.0.0.0 --port 8080
     environment:
       - SQLITE_WEB_PASSWORD=admin123
